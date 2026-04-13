@@ -217,7 +217,7 @@ if st.button("Run Backtest", type="primary"):
             runtime_seconds=elapsed_sec,
         )
         st.subheader("Copy-paste summary (params + results)")
-        st.caption("Select all (Ctrl+A) then copy (Ctrl+C) for ChatGPT / notes.")
+        st.caption("Select all (Ctrl+A) then copy (Ctrl+C) for notes.")
         st.text_area(
             "Backtest summary — copy/paste",
             value=summary_text,

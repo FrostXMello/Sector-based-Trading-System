@@ -1,4 +1,4 @@
-"""Build a plain-text backtest summary for Streamlit copy-paste (e.g. LLM notes)."""
+"""Build a plain-text backtest summary for Streamlit copy-paste notes."""
 
 from __future__ import annotations
 

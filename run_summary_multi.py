@@ -1,4 +1,4 @@
-"""Build a plain-text multi-strategy backtest summary for copy/paste (LLM notes)."""
+"""Build a plain-text multi-strategy backtest summary for copy/paste notes."""
 
 from __future__ import annotations
 

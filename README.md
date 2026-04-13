@@ -1,4 +1,4 @@
-# Multi-Factor AI Financial Decision System
+# Sector-based Trading System
 
 ## Project Status
 Active
