@@ -4,78 +4,99 @@ import numpy as np
 import pandas as pd
 
 
-def prob_to_signal(
-    proba_buy: np.ndarray,
+def probability_to_signal(
+    probability: float,
+    price: float,
+    ma20: float,
+    ma50: float,
+    rsi14: float,
+    prev_close: float,
+    ma20_prev: float,
+    pullback_band: float,
+    prob_buy_min: float,
+    sell_prob_max: float,
+    rsi_min: float,
+) -> str:
+    p = float(np.clip(probability, 0.0, 1.0))
+    band = float(max(0.0, pullback_band))
+    # (A) Pullback bounce: within ±band of MA20, up day
+    pullback_bounce = (
+        float(price) >= float(ma20) * (1.0 - band)
+        and float(price) <= float(ma20) * (1.0 + band)
+        and float(price) > float(prev_close)
+    )
+    # (B) MA20 reclaim: yesterday below MA20, today above (point-in-time MA20)
+    reclaim_ok = (
+        np.isfinite(ma20_prev)
+        and float(prev_close) < float(ma20_prev)
+        and float(price) > float(ma20)
+    )
+    entry_shape = pullback_bounce or reclaim_ok
+
+    base_buy = (
+        p > prob_buy_min
+        and float(price) > float(ma50)
+        and entry_shape
+        and float(rsi14) > float(rsi_min)
+    )
+    if base_buy:
+        return "BUY"
+    if p < sell_prob_max:
+        return "SELL"
+    return "HOLD"
+
+
+def rank_sector_candidates(
+    candidates: pd.DataFrame,
     *,
-    buy_threshold: float = 0.6,
-    sell_threshold: float = 0.4,
-) -> np.ndarray:
-    """
-    Convert predicted probability of next-day return>0 into discrete trading signals.
-    """
-    if not (0 < sell_threshold < buy_threshold < 1):
-        raise ValueError("Require 0 < sell_threshold < buy_threshold < 1")
-
-    signals = np.array(["HOLD"] * len(proba_buy), dtype=object)
-    signals[proba_buy > buy_threshold] = "BUY"
-    signals[proba_buy < sell_threshold] = "SELL"
-    return signals
-
-
-def prob_to_signal_quantile(
-    proba_buy: np.ndarray,
-    *,
-    buy_quantile: float = 0.7,
-    sell_quantile: float = 0.3,
-) -> np.ndarray:
-    """
-    Quantile-based signal mapping.
-
-    Instead of using fixed probability cutoffs, we compute cutoffs from the
-    predicted probability distribution for the test period:
-    - BUY if proba >= q_buy
-    - SELL if proba <= q_sell
-    - otherwise HOLD
-
-    This is useful when a model's probabilities are "compressed" (common for
-    Logistic Regression), causing fixed thresholds to produce all HOLD.
-    """
-    if not (0 < sell_quantile < buy_quantile < 1):
-        raise ValueError("Require 0 < sell_quantile < buy_quantile < 1")
-
-    q_buy = float(np.quantile(proba_buy, buy_quantile))
-    q_sell = float(np.quantile(proba_buy, sell_quantile))
-
-    signals = np.array(["HOLD"] * len(proba_buy), dtype=object)
-    signals[proba_buy >= q_buy] = "BUY"
-    signals[proba_buy <= q_sell] = "SELL"
-    return signals
-
-
-def attach_signals(
-    test_df: pd.DataFrame,
-    test_proba: np.ndarray,
-    *,
-    threshold_mode: str = "fixed",
-    buy_threshold: float = 0.6,
-    sell_threshold: float = 0.4,
-    buy_quantile: float = 0.7,
-    sell_quantile: float = 0.3,
+    pullback_band: float = 0.02,
+    prob_buy_min: float = 0.60,
+    sell_prob_max: float = 0.40,
+    rsi_min: float = 45.0,
 ) -> pd.DataFrame:
-    """
-    Return a copy of `test_df` with `Proba` and `Signal` columns attached.
-    """
-    out = test_df.copy()
-    out["Proba"] = test_proba
-
-    proba = out["Proba"].values
-    mode = threshold_mode.lower().strip()
-    if mode == "fixed":
-        out["Signal"] = prob_to_signal(proba, buy_threshold=buy_threshold, sell_threshold=sell_threshold)
-    elif mode == "quantile":
-        out["Signal"] = prob_to_signal_quantile(proba, buy_quantile=buy_quantile, sell_quantile=sell_quantile)
-    else:
-        raise ValueError("threshold_mode must be 'fixed' or 'quantile'")
-
+    req = {
+        "Ticker",
+        "Sector",
+        "Price",
+        "MA20",
+        "MA50",
+        "RSI14",
+        "PrevClose",
+        "MA20_prev",
+        "Probability",
+    }
+    if not req.issubset(candidates.columns):
+        raise ValueError(f"Missing required columns: {sorted(req - set(candidates.columns))}")
+    out = candidates.copy()
+    out = out[out["Price"] > out["MA50"]].copy()
+    out = out.replace([np.inf, -np.inf], np.nan).dropna(subset=["MA20", "MA50", "RSI14", "PrevClose", "Probability"])
+    out = out.sort_values(["Sector", "Probability"], ascending=[True, False]).reset_index(drop=True)
+    out["Signal"] = out.apply(
+        lambda r: probability_to_signal(
+            float(r["Probability"]),
+            float(r["Price"]),
+            float(r["MA20"]),
+            float(r["MA50"]),
+            float(r["RSI14"]),
+            float(r["PrevClose"]),
+            float(r["MA20_prev"]) if pd.notna(r["MA20_prev"]) else float("nan"),
+            float(pullback_band),
+            float(prob_buy_min),
+            float(sell_prob_max),
+            float(rsi_min),
+        ),
+        axis=1,
+    )
+    out = out[out["Signal"] == "BUY"].copy()
     return out
 
+
+def select_top_per_sector(ranked_candidates: pd.DataFrame) -> pd.DataFrame:
+    if ranked_candidates.empty:
+        return ranked_candidates.copy()
+    return (
+        ranked_candidates.sort_values(["Sector", "Probability"], ascending=[True, False])
+        .groupby("Sector", as_index=False)
+        .head(1)
+        .reset_index(drop=True)
+    )
